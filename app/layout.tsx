@@ -8,8 +8,8 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "DailyLog AI - Voice-First Field Reporting",
-  description: "Voice-first daily field reporting for contractors. Record, categorize, and export your daily logs with ease.",
+  title: "🛡️ DailyLog - Log Your Work. Protect Your Job.",
+  description: "Voice-first daily field reporting. Log your day in 60 seconds. Get paid faster, stay covered in disputes, pass inspections.",
 };
 
 export default function RootLayout({

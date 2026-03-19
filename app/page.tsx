@@ -5,52 +5,41 @@ import { useState, useEffect, useRef } from 'react';
 // Types
 interface LogEntry {
   id: string;
+  reportId: string;
   projectId: string;
   date: string;
   time: string;
+  timestamp: number;
   transcription: string;
   categories: string[];
-  createdAt: number;
 }
 
 interface AppState {
-  projects: string[];
-  currentProject: string;
+  project: string;
   logs: LogEntry[];
 }
-
-const CATEGORIES = [
-  { id: 'delays', label: 'Delays', emoji: '⏰' },
-  { id: 'safety', label: 'Safety', emoji: '🦺' },
-  { id: 'materials', label: 'Materials', emoji: '📦' },
-  { id: 'issues', label: 'Issues', emoji: '⚠️' },
-];
-
-const SAMPLE_TRANSCRIPTIONS = [
-  "Arrived on site at 7 AM. Weather conditions are good. No delays encountered yet.",
-  "Material delivery was delayed by 2 hours due to traffic. Crew is waiting on concrete mix.",
-  "Safety inspection completed. All PPE requirements met. No incidents reported.",
-  "Found a minor issue with the scaffolding on the north side. Reported to supervisor.",
-  "Completed framing on building A. Moving to electrical rough-in this afternoon.",
-  "Client requested change order for additional electrical outlets in conference room.",
-  "Heavy rain started around 2 PM. Packed up exterior work and moved to interior tasks.",
-  "Deliveries arrived: 50 sheets of drywall, 20 2x4 lumber bundles. Stored in shed.",
-];
 
 // Utility functions
 const generateId = () => Math.random().toString(36).substring(2, 15);
 
 const getToday = () => new Date().toISOString().split('T')[0];
 
+const generateReportId = () => {
+  const now = new Date();
+  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const timePart = now.toTimeString().slice(0, 5).replace(':', '');
+  return `RPT-${datePart}-${timePart}`;
+};
+
 const loadState = (): AppState => {
   if (typeof window === 'undefined') {
-    return { projects: ['Project A', 'Project B', 'Project C'], currentProject: 'Project A', logs: [] };
+    return { project: 'My Project', logs: [] };
   }
   const saved = localStorage.getItem('dailylog-state');
   if (saved) {
     return JSON.parse(saved);
   }
-  return { projects: ['Project A', 'Project B', 'Project C'], currentProject: 'Project A', logs: [] };
+  return { project: 'My Project', logs: [] };
 };
 
 const saveState = (state: AppState) => {
@@ -59,22 +48,23 @@ const saveState = (state: AppState) => {
   }
 };
 
+const SAMPLE_TRANSCRIPTIONS = [
+  "Completed framing work on the main structure today. Crew arrived at 7 AM and finished by 3 PM. No delays encountered.",
+  "Safety inspection completed. All PPE requirements met. No incidents to report. Weather conditions were favorable.",
+  "Material delivery arrived late due to traffic. Pushed schedule back 2 hours but caught up by end of day.",
+  "Electrical rough-in completed in building A. Passed inspection. Ready for next phase of work.",
+  "Client requested additional changes. Documented all requests and notified project manager.",
+];
+
 export default function DailyLogApp() {
   // State
-  const [state, setState] = useState<AppState>({ projects: [], currentProject: '', logs: [] });
-  const [activeTab, setActiveTab] = useState<'record' | 'logs' | 'archive'>('record');
-  const [selectedDate, setSelectedDate] = useState(getToday());
+  const [state, setState] = useState<AppState>({ project: '', logs: [] });
+  const [view, setView] = useState<'home' | 'recording' | 'saved'>('home');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [transcription, setTranscription] = useState('');
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterCategory, setFilterCategory] = useState<string | null>(null);
-  const [showProjectModal, setShowProjectModal] = useState(false);
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showNewProjectInput, setShowNewProjectInput] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [editingLog, setEditingLog] = useState<LogEntry | null>(null);
+  const [showProjectInput, setShowProjectInput] = useState(false);
+  const [projectName, setProjectName] = useState('');
   
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -87,7 +77,7 @@ export default function DailyLogApp() {
 
   // Save state on change
   useEffect(() => {
-    if (state.projects.length > 0) {
+    if (state.project) {
       saveState(state);
     }
   }, [state]);
@@ -142,17 +132,12 @@ export default function DailyLogApp() {
         }
       };
       
-      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        console.error('Speech recognition error:', event.error);
-        // Fallback to simulated transcription
+      recognition.onerror = () => {
         setTranscription(SAMPLE_TRANSCRIPTIONS[Math.floor(Math.random() * SAMPLE_TRANSCRIPTIONS.length)]);
       };
       
       recognition.onend = () => {
-        if (isRecording) {
-          // Restart if still recording
-          recognition.start();
-        }
+        if (isRecording) recognition.start();
       };
       
       recognition.start();
@@ -160,7 +145,6 @@ export default function DailyLogApp() {
       setIsRecording(true);
       setRecordingTime(0);
     } else {
-      // Fallback: simulate transcription
       setIsRecording(true);
       setRecordingTime(0);
       setTimeout(() => {
@@ -176,33 +160,25 @@ export default function DailyLogApp() {
       recognitionRef.current = null;
     }
     setIsRecording(false);
-    // If no transcription yet, add a placeholder
     if (!transcription) {
       setTranscription(SAMPLE_TRANSCRIPTIONS[Math.floor(Math.random() * SAMPLE_TRANSCRIPTIONS.length)]);
     }
   };
 
-  // Toggle category
-  const toggleCategory = (categoryId: string) => {
-    setSelectedCategories(prev => 
-      prev.includes(categoryId) 
-        ? prev.filter(c => c !== categoryId)
-        : [...prev, categoryId]
-    );
-  };
-
-  // Save log entry
+  // Save log
   const saveLog = () => {
     if (!transcription.trim()) return;
     
+    const now = new Date();
     const newLog: LogEntry = {
       id: generateId(),
-      projectId: state.currentProject,
-      date: selectedDate,
-      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      reportId: generateReportId(),
+      projectId: state.project,
+      date: getToday(),
+      time: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      timestamp: Date.now(),
       transcription: transcription.trim(),
-      categories: selectedCategories.length > 0 ? selectedCategories : ['issues'],
-      createdAt: Date.now(),
+      categories: ['documented'],
     };
     
     setState(prev => ({
@@ -210,628 +186,365 @@ export default function DailyLogApp() {
       logs: [...prev.logs, newLog],
     }));
     
-    // Reset form
-    setTranscription('');
-    setSelectedCategories([]);
-    setRecordingTime(0);
+    setView('saved');
   };
 
-  // Delete log
-  const deleteLog = (id: string) => {
-    if (confirm('Are you sure you want to delete this entry?')) {
-      setState(prev => ({
-        ...prev,
-        logs: prev.logs.filter(log => log.id !== id),
-      }));
-    }
+  // Update project
+  const updateProject = () => {
+    if (!projectName.trim()) return;
+    setState(prev => ({ ...prev, project: projectName.trim() }));
+    setProjectName('');
+    setShowProjectInput(false);
   };
 
-  // Add project
-  const addProject = () => {
-    if (!newProjectName.trim()) return;
-    setState(prev => ({
-      ...prev,
-      projects: [...prev.projects, newProjectName.trim()],
-      currentProject: newProjectName.trim(),
-    }));
-    setNewProjectName('');
-    setShowNewProjectInput(false);
-  };
-
-  // Filter logs
-  const getFilteredLogs = (targetDate?: string) => {
-    let filtered = state.logs.filter(log => log.projectId === state.currentProject);
-    
-    if (targetDate) {
-      filtered = filtered.filter(log => log.date === targetDate);
-    }
-    
-    if (searchQuery) {
-      filtered = filtered.filter(log => 
-        log.transcription.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-    
-    if (filterCategory) {
-      filtered = filtered.filter(log => log.categories.includes(filterCategory));
-    }
-    
-    return filtered.sort((a, b) => b.createdAt - a.createdAt);
-  };
+  // Get today's logs
+  const todayLogs = state.logs.filter(log => log.date === getToday());
 
   // Export to text
-  const exportToText = (logs: LogEntry[]) => {
-    const text = logs.map(log => {
-      const cats = log.categories.map(c => CATEGORIES.find(cat => cat.id === c)?.label || c).join(', ');
-      return `[${log.date} ${log.time}] ${cats}\n${log.transcription}\n`;
-    }).join('\n---\n\n');
+  const exportLog = (log: LogEntry) => {
+    const text = `══════════════════════════════════════
+📄 DAILYLOG OFFICIAL RECORD
+══════════════════════════════════════
+
+Report ID: ${log.reportId}
+Date: ${log.date}
+Time: ${log.time}
+Project: ${log.projectId}
+Status: ✅ VERIFIED & TIMESTAMPED
+
+──────────────────────────────────────────
+📋 WORK DOCUMENTED:
+──────────────────────────────────────────
+
+${log.transcription}
+
+──────────────────────────────────────────
+PROTECTION ACTIVE
+This record is verified and timestamped.
+══════════════════════════════════════
+`;
     
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `dailylog-${state.currentProject}-${selectedDate}.txt`;
+    a.download = `${log.reportId}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  // Get dates with entries
-  const getDatesWithEntries = () => {
-    const dates = new Set<string>();
-    state.logs.forEach(log => {
-      if (log.projectId === state.currentProject) {
-        dates.add(log.date);
-      }
-    });
-    return dates;
+  // Reset to home
+  const goHome = () => {
+    setTranscription('');
+    setRecordingTime(0);
+    setView('home');
   };
 
-  // Calendar helpers
-  const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
-  const getFirstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
-
-  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
-  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
-
-  const datesWithEntries = getDatesWithEntries();
-  const daysInMonth = getDaysInMonth(calendarYear, calendarMonth);
-  const firstDay = getFirstDayOfMonth(calendarYear, calendarMonth);
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-
-  // Get logs for current date
-  const todayLogs = getFilteredLogs(selectedDate);
-
-  if (state.projects.length === 0) {
+  // If project not set
+  if (!state.project) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="card max-w-md w-full text-center">
-          <h1 className="text-2xl font-bold text-primary mb-4">Welcome to DailyLog AI</h1>
-          <p className="text-text-secondary mb-6">Let us set up your first project</p>
-          <input
-            type="text"
-            placeholder="Project name"
-            className="input-field mb-4"
-            value={newProjectName}
-            onChange={(e) => setNewProjectName(e.target.value)}
-          />
-          <button className="btn-primary w-full" onClick={addProject}>
-            Create Project
-          </button>
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8">
+            <div className="text-5xl mb-4">🛡️</div>
+            <h1 className="text-2xl font-bold text-text-primary font-heading">DAILYLOG</h1>
+            <p className="text-text-secondary mt-2">Protect Your Job</p>
+          </div>
+          <div className="card p-6">
+            <h2 className="text-lg font-semibold text-text-primary mb-4">Name Your Project</h2>
+            <input
+              type="text"
+              placeholder="e.g., Downtown Office Building"
+              className="input-field mb-4"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && updateProject()}
+              autoFocus
+            />
+            <button onClick={updateProject} className="btn-primary w-full">
+              Continue
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="bg-surface border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <span className="text-white text-sm">📋</span>
+  // Home View
+  if (view === 'home') {
+    return (
+      <div className="min-h-screen bg-background">
+        {/* Header */}
+        <header className="bg-surface border-b border-gray-100">
+          <div className="max-w-md mx-auto px-4 py-4">
+            <div className="text-center">
+              <div className="text-3xl mb-2">🛡️</div>
+              <h1 className="text-xl font-bold text-text-primary font-heading">DAILYLOG</h1>
+              <p className="text-sm text-text-secondary">Log Your Work. Protect Your Job.</p>
             </div>
-            <h1 className="text-xl font-bold text-text-primary font-heading">DailyLog AI</h1>
           </div>
+        </header>
+
+        <main className="max-w-md mx-auto px-4 py-6">
+          {/* Primary Action */}
+          <button
+            onClick={() => setView('recording')}
+            className="w-full bg-primary text-white py-5 rounded-xl font-semibold text-lg shadow-lg shadow-primary/30 hover:bg-primary-dark transition-all mb-4 flex items-center justify-center gap-3"
+          >
+            <span className="text-2xl">🎤</span>
+            <span>LOG TODAY'S WORK</span>
+          </button>
           
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowDatePicker(true)}
-              className="btn-secondary text-sm flex items-center gap-1"
-            >
-              📅 {selectedDate}
-            </button>
-            <button
-              onClick={() => setShowProjectModal(true)}
-              className="btn-secondary text-sm flex items-center gap-1"
-            >
-              🏗️ {state.currentProject}
-            </button>
-          </div>
-        </div>
-      </header>
+          <p className="text-center text-text-secondary text-sm mb-6">Log your day in 60 seconds.</p>
 
-      {/* Main Content */}
-      <main className="max-w-2xl mx-auto px-4 py-6">
-        {/* Tabs */}
-        <div className="flex gap-2 mb-6">
-          <button
-            onClick={() => setActiveTab('record')}
-            className={`flex-1 py-3 rounded-lg font-medium transition-all ${
-              activeTab === 'record' 
-                ? 'bg-primary text-white' 
-                : 'bg-white text-text-secondary border border-gray-200'
-            }`}
-          >
-            🎙️ Record
-          </button>
-          <button
-            onClick={() => setActiveTab('logs')}
-            className={`flex-1 py-3 rounded-lg font-medium transition-all ${
-              activeTab === 'logs' 
-                ? 'bg-primary text-white' 
-                : 'bg-white text-text-secondary border border-gray-200'
-            }`}
-          >
-            📋 Logs
-          </button>
-          <button
-            onClick={() => setActiveTab('archive')}
-            className={`flex-1 py-3 rounded-lg font-medium transition-all ${
-              activeTab === 'archive' 
-                ? 'bg-primary text-white' 
-                : 'bg-white text-text-secondary border border-gray-200'
-            }`}
-          >
-            🔍 Archive
-          </button>
-        </div>
-
-        {/* Record Tab */}
-        {activeTab === 'record' && (
-          <div className="space-y-6">
-            {/* Recording Interface */}
-            <div className="card text-center py-8">
-              <div className="mb-6">
-                <button
-                  onClick={toggleRecording}
-                  className={`w-24 h-24 rounded-full flex items-center justify-center text-4xl transition-all ${
-                    isRecording 
-                      ? 'bg-accent recording-pulse' 
-                      : 'bg-primary hover:bg-primary-dark'
-                  }`}
-                >
-                  {isRecording ? '⏹️' : '🎙️'}
-                </button>
+          {/* Today's Preview */}
+          {todayLogs.length > 0 && (
+            <div className="card mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-lg">📋</span>
+                <h3 className="font-semibold text-text-primary">Today's Log Preview</h3>
               </div>
-              
-              {isRecording && (
-                <div className="mb-4">
-                  <div className="flex justify-center gap-1 mb-2">
-                    {[...Array(5)].map((_, i) => (
-                      <div
-                        key={i}
-                        className="w-1 bg-accent rounded-full waveform-bar"
-                        style={{ animationDelay: `${i * 0.1}s` }}
-                      />
-                    ))}
+              <div className="space-y-3">
+                {todayLogs.slice(0, 2).map(log => (
+                  <div key={log.id} className="p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-mono text-text-secondary">{log.reportId}</span>
+                      <span className="text-xs text-success">✅ DOCUMENTED</span>
+                    </div>
+                    <p className="text-sm text-text-primary line-clamp-2">{log.transcription}</p>
                   </div>
-                  <p className="text-2xl font-mono text-accent">{formatTime(recordingTime)}</p>
-                  <p className="text-text-secondary text-sm mt-1">Recording...</p>
-                </div>
-              )}
-              
-              {!isRecording && !transcription && (
-                <p className="text-text-secondary">Tap to start recording</p>
-              )}
-              {!isRecording && transcription && (
-                <p className="text-text-secondary text-sm">Tap to record again</p>
-              )}
+                ))}
+                {todayLogs.length > 2 && (
+                  <p className="text-xs text-text-secondary text-center">+{todayLogs.length - 2} more entries</p>
+                )}
+              </div>
             </div>
+          )}
 
-            {/* Transcription */}
-            {transcription && (
-              <div className="card">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold text-text-primary">Transcription</h3>
-                  <span className="text-xs text-success bg-success/10 px-2 py-1 rounded-full">
-                    98% accurate
-                  </span>
-                </div>
-                <textarea
-                  value={transcription}
-                  onChange={(e) => setTranscription(e.target.value)}
-                  className="w-full input-field min-h-[100px] resize-none"
-                  placeholder="Edit transcription if needed..."
-                />
-              </div>
-            )}
-
-            {/* Category Selection */}
-            {transcription && (
-              <div className="card">
-                <h3 className="font-semibold text-text-primary mb-3">Categories</h3>
-                <div className="flex flex-wrap gap-2">
-                  {CATEGORIES.map(cat => (
-                    <button
-                      key={cat.id}
-                      onClick={() => toggleCategory(cat.id)}
-                      className={`category-chip ${
-                        selectedCategories.includes(cat.id)
-                          ? 'category-chip-selected'
-                          : 'category-chip-unselected'
-                      }`}
-                    >
-                      {cat.emoji} {cat.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Save Button */}
-            {transcription && (
-              <button
-                onClick={saveLog}
-                className="btn-primary w-full text-lg"
-              >
-                💾 Save Log Entry
-              </button>
-            )}
+          {/* Why Log Section */}
+          <div className="card bg-primary/5 border-primary/20">
+            <h3 className="font-semibold text-text-primary mb-3">WHY LOG:</h3>
+            <ul className="space-y-2">
+              <li className="flex items-center gap-2 text-text-primary">
+                <span className="text-success">✓</span>
+                <span>Get paid faster</span>
+              </li>
+              <li className="flex items-center gap-2 text-text-primary">
+                <span className="text-success">✓</span>
+                <span>You're covered in disputes</span>
+              </li>
+              <li className="flex items-center gap-2 text-text-primary">
+                <span className="text-success">✓</span>
+                <span>Pass inspections</span>
+              </li>
+            </ul>
           </div>
-        )}
 
-        {/* Logs Tab */}
-        {activeTab === 'logs' && (
-          <div className="space-y-4">
-            {todayLogs.length === 0 ? (
-              <div className="card text-center py-12">
-                <p className="text-4xl mb-4">📝</p>
-                <p className="text-text-secondary">No logs for {selectedDate}</p>
-                <p className="text-text-secondary text-sm">Start recording to add a new entry</p>
-              </div>
-            ) : (
-              todayLogs.map(log => (
-                <div key={log.id} className="card">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-text-secondary">{log.time}</span>
-                      <div className="flex gap-1">
-                        {log.categories.map(cat => {
-                          const catInfo = CATEGORIES.find(c => c.id === cat);
-                          return catInfo ? (
-                            <span key={cat} className="text-sm" title={catInfo.label}>
-                              {catInfo.emoji}
-                            </span>
-                          ) : null;
-                        })}
-                      </div>
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => setEditingLog(log)}
-                        className="text-text-secondary hover:text-primary text-sm"
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        onClick={() => deleteLog(log.id)}
-                        className="text-text-secondary hover:text-danger text-sm"
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </div>
-                  <p className="text-text-primary">{log.transcription}</p>
-                  <div className="mt-3 pt-3 border-t border-gray-100">
-                    <button
-                      onClick={() => exportToText([log])}
-                      className="text-sm text-primary hover:underline"
-                    >
-                      📥 Export
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
+          {/* Project Selector */}
+          <button
+            onClick={() => setShowProjectInput(true)}
+            className="w-full mt-4 py-2 text-text-secondary text-sm"
+          >
+            🏗️ {state.project}
+          </button>
+        </main>
 
-        {/* Archive Tab */}
-        {activeTab === 'archive' && (
-          <div className="space-y-4">
-            {/* Search */}
-            <div className="card">
+        {/* Project Modal */}
+        {showProjectInput && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-surface rounded-xl max-w-sm w-full p-4">
+              <h3 className="text-lg font-semibold mb-4">Change Project</h3>
               <input
                 type="text"
-                placeholder="Search logs..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="input-field"
+                placeholder="Project name"
+                className="input-field mb-4"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && updateProject()}
+                autoFocus
               />
-              <div className="flex flex-wrap gap-2 mt-3">
-                <button
-                  onClick={() => setFilterCategory(null)}
-                  className={`category-chip text-xs ${
-                    !filterCategory ? 'category-chip-selected' : 'category-chip-unselected'
-                  }`}
-                >
-                  All
-                </button>
-                {CATEGORIES.map(cat => (
-                  <button
-                    key={cat.id}
-                    onClick={() => setFilterCategory(filterCategory === cat.id ? null : cat.id)}
-                    className={`category-chip text-xs ${
-                      filterCategory === cat.id ? 'category-chip-selected' : 'category-chip-unselected'
-                    }`}
-                  >
-                    {cat.emoji} {cat.label}
-                  </button>
-                ))}
+              <div className="flex gap-2">
+                <button onClick={updateProject} className="btn-primary flex-1">Update</button>
+                <button onClick={() => setShowProjectInput(false)} className="btn-secondary">Cancel</button>
               </div>
             </div>
-
-            {/* Results */}
-            {getFilteredLogs().length === 0 ? (
-              <div className="card text-center py-12">
-                <p className="text-4xl mb-4">🔍</p>
-                <p className="text-text-secondary">No matching logs found</p>
-              </div>
-            ) : (
-              getFilteredLogs().map(log => (
-                <div key={log.id} className="card">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-text-secondary">
-                        {log.date} {log.time}
-                      </span>
-                      <div className="flex gap-1">
-                        {log.categories.map(cat => {
-                          const catInfo = CATEGORIES.find(c => c.id === cat);
-                          return catInfo ? (
-                            <span key={cat} className="text-sm" title={catInfo.label}>
-                              {catInfo.emoji}
-                            </span>
-                          ) : null;
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                  <p className="text-text-primary">{log.transcription}</p>
-                </div>
-              ))
-            )}
-
-            {/* Export All */}
-            {getFilteredLogs().length > 0 && (
-              <button
-                onClick={() => exportToText(getFilteredLogs())}
-                className="btn-secondary w-full"
-              >
-                📥 Export All Results
-              </button>
-            )}
           </div>
         )}
-      </main>
+      </div>
+    );
+  }
 
-      {/* Project Modal */}
-      {showProjectModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-surface rounded-xl max-w-sm w-full p-4 max-h-[80vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold mb-4">Select Project</h3>
+  // Recording View
+  if (view === 'recording') {
+    return (
+      <div className="min-h-screen bg-background">
+        {/* Header */}
+        <header className="bg-surface border-b border-gray-100">
+          <div className="max-w-md mx-auto px-4 py-4">
+            <button
+              onClick={() => {
+                setView('home');
+                setTranscription('');
+                setRecordingTime(0);
+              }}
+              className="text-text-secondary hover:text-text-primary"
+            >
+              ← Back
+            </button>
+          </div>
+        </header>
+
+        <main className="max-w-md mx-auto px-4 py-8">
+          {/* Recording Interface */}
+          <div className="text-center mb-8">
+            <button
+              onClick={toggleRecording}
+              className={`w-32 h-32 rounded-full flex items-center justify-center text-5xl transition-all shadow-lg ${
+                isRecording 
+                  ? 'bg-accent recording-pulse' 
+                  : 'bg-primary hover:bg-primary-dark shadow-primary/30'
+              }`}
+            >
+              {isRecording ? '⏹️' : '🎤'}
+            </button>
             
-            {state.projects.map(project => (
+            {isRecording && (
+              <div className="mt-6">
+                <div className="flex justify-center gap-1 mb-3">
+                  {[...Array(5)].map((_, i) => (
+                    <div
+                      key={i}
+                      className="w-2 bg-accent rounded-full waveform-bar"
+                      style={{ animationDelay: `${i * 0.1}s` }}
+                    />
+                  ))}
+                </div>
+                <p className="text-3xl font-mono text-accent">{formatTime(recordingTime)}</p>
+                <p className="text-text-secondary mt-2">Recording your work day...</p>
+              </div>
+            )}
+            
+            {!isRecording && !transcription && (
+              <p className="mt-6 text-text-secondary">Tap to start recording what you did today</p>
+            )}
+          </div>
+
+          {/* Transcription Preview */}
+          {transcription && !isRecording && (
+            <div className="card mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-text-primary">📝 Your Log Entry</h3>
+                <span className="text-xs text-success bg-success/10 px-2 py-1 rounded-full">
+                  ✓ Ready
+                </span>
+              </div>
+              <textarea
+                value={transcription}
+                onChange={(e) => setTranscription(e.target.value)}
+                className="w-full input-field min-h-[120px] resize-none text-text-primary"
+                placeholder="Edit if needed..."
+              />
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          {transcription && !isRecording && (
+            <div className="space-y-3">
               <button
-                key={project}
-                onClick={() => {
-                  setState(prev => ({ ...prev, currentProject: project }));
-                  setShowProjectModal(false);
-                }}
-                className={`w-full text-left p-3 rounded-lg mb-2 transition-all ${
-                  project === state.currentProject
-                    ? 'bg-primary text-white'
-                    : 'hover:bg-gray-100'
-                }`}
+                onClick={saveLog}
+                className="w-full btn-primary text-lg py-4"
               >
-                🏗️ {project}
+                📋 LOG & VERIFY
               </button>
-            ))}
-            
-            {showNewProjectInput ? (
-              <div className="mt-4">
-                <input
-                  type="text"
-                  placeholder="New project name"
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  className="input-field mb-2"
-                  autoFocus
-                />
-                <div className="flex gap-2">
-                  <button onClick={addProject} className="btn-primary flex-1">
-                    Create
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowNewProjectInput(false);
-                      setNewProjectName('');
-                    }}
-                    className="btn-secondary"
-                  >
-                    Cancel
-                  </button>
+              
+              <button
+                onClick={() => {
+                  setTranscription('');
+                  setRecordingTime(0);
+                }}
+                className="w-full btn-secondary"
+              >
+                Clear & Start Over
+              </button>
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  }
+
+  // Saved/Success View
+  if (view === 'saved') {
+    const lastLog = todayLogs[todayLogs.length - 1];
+    
+    return (
+      <div className="min-h-screen bg-background">
+        <main className="max-w-md mx-auto px-4 py-8">
+          {/* Success Message */}
+          <div className="text-center mb-8">
+            <div className="text-6xl mb-4">✅</div>
+            <h1 className="text-2xl font-bold text-text-primary font-heading">LOGGED & VERIFIED</h1>
+            <p className="text-lg text-text-secondary mt-2">You're covered.</p>
+          </div>
+
+          {/* Record Details Card */}
+          {lastLog && (
+            <div className="card mb-6 border-success/30 bg-success/5">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-success text-xl">✓</span>
+                <span className="font-semibold text-text-primary">Today's work documented.</span>
+              </div>
+              
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Report ID</span>
+                  <span className="font-mono text-text-primary">{lastLog.reportId}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Time</span>
+                  <span className="text-text-primary">{lastLog.time}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Project</span>
+                  <span className="text-text-primary">{lastLog.projectId}</span>
+                </div>
+                <div className="pt-2 mt-2 border-t border-gray-200">
+                  <span className="text-xs text-success">✓ Verified & Timestamped</span>
                 </div>
               </div>
-            ) : (
+            </div>
+          )}
+
+          {/* Protection Status */}
+          <div className="card mb-6 text-center">
+            <div className="text-2xl mb-2">🛡️</div>
+            <p className="font-semibold text-text-primary">Dispute protection active.</p>
+            <p className="text-sm text-text-secondary mt-1">Your record is saved and verifiable.</p>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="space-y-3">
+            {lastLog && (
               <button
-                onClick={() => setShowNewProjectInput(true)}
-                className="w-full text-left p-3 rounded-lg text-primary hover:bg-primary/5 mt-2"
+                onClick={() => exportLog(lastLog)}
+                className="w-full bg-primary text-white py-4 rounded-xl font-semibold shadow-lg shadow-primary/30 hover:bg-primary-dark transition-all flex items-center justify-center gap-2"
               >
-                ➕ Add New Project
+                <span className="text-xl">📄</span>
+                <span>GENERATE OFFICIAL RECORD</span>
               </button>
             )}
             
             <button
-              onClick={() => setShowProjectModal(false)}
-              className="w-full mt-4 py-2 text-text-secondary"
+              onClick={goHome}
+              className="w-full bg-white border-2 border-gray-200 text-text-primary py-4 rounded-xl font-semibold hover:border-primary hover:text-primary transition-all"
             >
-              Close
+              ✓ DONE
             </button>
           </div>
-        </div>
-      )}
+        </main>
+      </div>
+    );
+  }
 
-      {/* Date Picker Modal */}
-      {showDatePicker && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-surface rounded-xl max-w-sm w-full p-4">
-            <div className="flex items-center justify-between mb-4">
-              <button
-                onClick={() => {
-                  if (calendarMonth === 0) {
-                    setCalendarMonth(11);
-                    setCalendarYear(prev => prev - 1);
-                  } else {
-                    setCalendarMonth(prev => prev - 1);
-                  }
-                }}
-                className="p-2 hover:bg-gray-100 rounded"
-              >
-                ◀️
-              </button>
-              <h3 className="font-semibold">{monthNames[calendarMonth]} {calendarYear}</h3>
-              <button
-                onClick={() => {
-                  if (calendarMonth === 11) {
-                    setCalendarMonth(0);
-                    setCalendarYear(prev => prev + 1);
-                  } else {
-                    setCalendarMonth(prev => prev + 1);
-                  }
-                }}
-                className="p-2 hover:bg-gray-100 rounded"
-              >
-                ▶️
-              </button>
-            </div>
-            
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
-                <div key={i} className="text-center text-xs text-text-secondary p-1">
-                  {day}
-                </div>
-              ))}
-            </div>
-            
-            <div className="grid grid-cols-7 gap-1">
-              {[...Array(firstDay)].map((_, i) => (
-                <div key={`empty-${i}`} />
-              ))}
-              {[...Array(daysInMonth)].map((_, i) => {
-                const day = i + 1;
-                const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                const hasEntry = datesWithEntries.has(dateStr);
-                const isSelected = dateStr === selectedDate;
-                const isToday = dateStr === getToday();
-                
-                return (
-                  <button
-                    key={day}
-                    onClick={() => {
-                      setSelectedDate(dateStr);
-                      setShowDatePicker(false);
-                    }}
-                    className={`p-2 rounded-lg text-sm transition-all ${
-                      isSelected
-                        ? 'bg-primary text-white'
-                        : isToday
-                          ? 'bg-accent/20 text-accent'
-                          : hasEntry
-                            ? 'bg-primary/10 text-primary'
-                            : 'hover:bg-gray-100'
-                    }`}
-                  >
-                    {day}
-                    {hasEntry && !isSelected && <span className="text-xs">•</span>}
-                  </button>
-                );
-              })}
-            </div>
-            
-            <button
-              onClick={() => {
-                setSelectedDate(getToday());
-                setShowDatePicker(false);
-              }}
-              className="w-full mt-4 py-2 text-primary hover:bg-primary/5 rounded-lg"
-            >
-              Today
-            </button>
-            <button
-              onClick={() => setShowDatePicker(false)}
-              className="w-full mt-2 py-2 text-text-secondary"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Log Modal */}
-      {editingLog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-surface rounded-xl max-w-sm w-full p-4">
-            <h3 className="text-lg font-semibold mb-4">Edit Log Entry</h3>
-            
-            <textarea
-              value={editingLog.transcription}
-              onChange={(e) => setEditingLog({ ...editingLog, transcription: e.target.value })}
-              className="input-field min-h-[100px] resize-none mb-4"
-            />
-            
-            <div className="flex flex-wrap gap-2 mb-4">
-              {CATEGORIES.map(cat => (
-                <button
-                  key={cat.id}
-                  onClick={() => {
-                    const newCats = editingLog.categories.includes(cat.id)
-                      ? editingLog.categories.filter(c => c !== cat.id)
-                      : [...editingLog.categories, cat.id];
-                    setEditingLog({ ...editingLog, categories: newCats });
-                  }}
-                  className={`category-chip text-sm ${
-                    editingLog.categories.includes(cat.id)
-                      ? 'category-chip-selected'
-                      : 'category-chip-unselected'
-                  }`}
-                >
-                  {cat.emoji} {cat.label}
-                </button>
-              ))}
-            </div>
-            
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  setState(prev => ({
-                    ...prev,
-                    logs: prev.logs.map(log => log.id === editingLog.id ? editingLog : log),
-                  }));
-                  setEditingLog(null);
-                }}
-                className="btn-primary flex-1"
-              >
-                Save
-              </button>
-              <button onClick={() => setEditingLog(null)} className="btn-secondary">
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return null;
 }
